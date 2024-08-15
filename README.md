@@ -11,7 +11,7 @@ HPC Server
   6. bash script 6.combine_counts.sh - combine results from featureCounts into one matrix
 
 R - local machine or Server
-
+  0. prepare for ensembl annotation file 
   1. preprocessing - stats QC, gene ID annotation 
   2. DEseq2
   3. functional pathways
