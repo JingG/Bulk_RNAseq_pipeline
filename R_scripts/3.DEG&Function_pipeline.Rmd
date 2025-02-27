@@ -1,0 +1,157 @@
+---
+title: "3.DEG&function"
+output: html_document
+date: "2024-09-23"
+---
+
+```{r}
+options(stringsAsFactors=FALSE)
+options(digits=10)
+library(knitr)
+library(DESeq2)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+#library(ensembldb)
+library(dplyr)
+library(openxlsx)
+library(vsn)
+library(ggpubr)
+
+source("/Users/jing/NUS Dropbox/Jing Guo/Projects/bin/CommonFunctionR/plot_pdf_png.r")
+project_dir <- "project_path"
+path_input <- paste0(project_dir,"inputFiles/")
+path_output <- paste0(project_dir,"results/DEG/")
+dir.create(path_output)
+path_deposit <- paste0(project_dir,"dataDeposit/")
+
+dds.list <-  readRDS(paste0(path_deposit, "2.dds_list_filtered.RDS"))
+TPM_filtered <- readRDS( file = paste0(path_deposit, "TPM_Filtered_w_annotation.RDS"))
+group_means_wide <- readRDS(file = paste0(path_deposit, "group_mean_all.RDS"))
+
+```
+
+```{r}
+# correction on the kidney (KDNY to KIDNEY) so that the for loop can add corresponding TPM 
+colnames(TPM_filtered) <- gsub(x=colnames(TPM_filtered), pattern = "KDNY", replacement = "KIDNEY") 
+# re-order TPM column name (group HFpEF and chow)
+TPM_filtered <- TPM_filtered[,c(1:10,seq(11, 20, 2), seq(12, 21, 2), seq(21, 30, 2), seq(22, 30, 2), 31, seq(32, 39, 2), seq(33, 39, 2))]
+group_means_df <- as.data.frame(group_means_wide)
+rownames(group_means_df) <- group_means_df$gene_id
+
+deg.list <- list()
+deg.sig.list.up <- list()
+deg.sig.list.down <- list()
+
+for(i in names(dds.list)){
+  print(i)
+  
+ ############# setting up the excel file ############
+  # Write data frames to sheets
+  dir.create(paste0(path_output, i))
+  wb <- createWorkbook()
+  addWorksheet(wb, paste0(i,".all"))
+  addWorksheet(wb, paste0(i,".up.sig"))
+  addWorksheet(wb, paste0(i,".d.sig"))
+  
+  
+ ############# DEG results #############
+  res.t <- results(dds.list[[i]], contrast=c("Treatment","HFpEF","Chow"), alpha = 0.05)
+  deg.list[[i]] <- res.t 
+  tt <- as.data.frame(deg.list[[i]])  %>%  arrange(padj)
+  tt2 <- cbind( TPM_filtered[rownames(tt), c(6,7,9,10, grep(x=colnames(TPM_filtered), pattern = toupper(i)))],  group_means_df[rownames(tt), grep(x=colnames(group_means_df), pattern = i)], tt)
+  writeData(wb, sheet = paste0(i,".all"), tt2, na.string = "NA")
+
+  
+  deg.sig.list.up[[i]] <- tt2 %>% filter(padj < 0.05) %>% filter(log2FoldChange>0) %>% arrange(desc(log2FoldChange))
+  #write.table(deg.sig.list.up[[i]], paste0(path_output, i, "/",i,".up_deg.txt"), col.names = NA, quote = F, sep = "\t")
+  writeData(wb, sheet = paste0(i,".up.sig"), deg.sig.list.up[[i]], na.string = "NA")
+  
+  
+  deg.sig.list.down[[i]] <- tt2 %>% filter(padj < 0.05) %>% filter(log2FoldChange<0) %>% arrange(log2FoldChange)
+  #write.table(deg.sig.list.down[[i]], paste0(path_output, i,"/",i, ".down_deg.txt"), col.names = NA, quote = F, sep = "\t")
+  writeData(wb, sheet = paste0(i,".d.sig"), deg.sig.list.down[[i]], na.string = "NA")
+ saveWorkbook(wb, file = paste0(path_output, i, "/", i,"_DEG.xlsx"), overwrite = TRUE)
+}
+```
+
+
+
+```{r}
+library(clusterProfiler)
+gmtPathways <- read.gmt("/Users/jing/NUS Dropbox/Jing Guo/Projects/bin/gmtFiles/m2.cp.v2024.1.Mm.symbols.gmt")
+gmtGO <- read.gmt("/Users/jing/NUS Dropbox/Jing Guo/Projects/bin/gmtFiles/m5.go.v2024.1.Mm.symbols.gmt")
+
+path_function <- paste0(project_dir, "results/4.functional/")
+
+
+pathway.up.list <- list()
+pathway.down.list <- list()
+go.up.list <- list()
+go.down.list <- list()
+
+
+filter <- dplyr::filter
+
+for(i in names(deg.list)){
+  print(i)
+
+# pathway 
+  dir.create(paste0(path_function, i))
+  pb <- createWorkbook()
+  addWorksheet(pb, paste0(i,".up"))
+  addWorksheet(pb, paste0(i,".down"))
+  
+  pathway.up.list[[i]] <-  enricher(unique(deg.sig.list.up[[i]]$external_gene_name), TERM2GENE=gmtPathways, qvalueCutoff = 0.05)
+  #write.table(pathway.up.list[[i]]@result, paste0(path_function, i, "/",i,".up_pathways.txt"), col.names = NA, quote = F, sep = "\t")
+  writeData(pb, sheet = paste0(i,".up"), pathway.up.list[[i]]@result, na.string = "NA")
+  
+  pathway.down.list[[i]] <-  enricher(unique(deg.sig.list.down[[i]]$external_gene_name), TERM2GENE=gmtPathways, qvalueCutoff = 0.05)
+ # write.table(pathway.down.list[[i]]@result, paste0(path_function, i,"/",i, ".down_pathways.txt"), col.names = NA, quote = F, sep = "\t")
+  writeData(pb, sheet = paste0(i,".down"), pathway.down.list[[i]]@result, na.string = "NA")
+  saveWorkbook(pb, file = paste0(path_function, i, "/", i,"_pathway.xlsx"), overwrite = TRUE)
+  
+# Gene Ontology
+  gb <- createWorkbook()
+  addWorksheet(gb, paste0(i,".up"))
+  addWorksheet(gb, paste0(i,".down"))
+  
+  go.up.list[[i]] <-  enricher(unique(deg.sig.list.up[[i]]$external_gene_name), TERM2GENE=gmtGO, qvalueCutoff = 0.05)
+  writeData(gb, sheet = paste0(i,".up"), go.up.list[[i]]@result, na.string = "NA")
+  # write.table(go.up.list[[i]]@result, paste0(path_function, i,"/",i, ".up_GOBP.txt"), col.names = NA, quote = F, sep = "\t")
+  
+  go.down.list[[i]] <-  enricher(unique(deg.sig.list.down[[i]]$external_gene_name), TERM2GENE=gmtGO, qvalueCutoff = 0.05)
+  writeData(gb, sheet = paste0(i,".down"), go.down.list[[i]]@result, na.string = "NA")
+  # write.table(go.up.list[[i]]@result, paste0(path_function, i,"/",i, ".down_GOBP.txt"), col.names = NA, quote = F, sep = "\t")
+  saveWorkbook(gb, file = paste0(path_function, i, "/", i,"_GO.xlsx"), overwrite = TRUE)
+  
+}
+
+
+for(i in names(deg.list)){
+  print(i) 
+  p1 <- barplot(pathway.up.list[[i]], x = "GeneRatio", showCategory = 20, font.size =10, label_format = 100 )
+  pdf_and_png(p1, paste0(path_function, i,"/",i, ".up_pathways"), width = 12, h_to_w_ratio = .8)
+  p2 <- barplot(pathway.down.list[[i]], x = "GeneRatio", showCategory = 20 ,font.size =10, label_format = 100 )
+  pdf_and_png(p2, paste0(path_function, i,"/",i, ".down_pathways"), width = 12, h_to_w_ratio = .8)
+}
+
+```
+
+Count for the DEGs
+```{r}
+library(gridExtra)
+tt <- rbind(sapply(deg.sig.list.up, nrow), sapply(deg.sig.list.down, nrow))
+rownames(tt) <- c("up", "down")
+pdf(file = paste0(path_output, "statistics_deg_number.pdf"), width = 4, height = 3)
+grid.table(tt) 
+dev.off()
+
+```
+
+
+```{r}
+save.image(file = paste0(path_deposit, "workspace.RImage"))
+sessionInfo()
+```
+

@@ -1,0 +1,191 @@
+---
+title: "2.sampleQC"
+output: html_document
+date: "2024-09-20"
+---
+
+
+```{r}
+options(stringsAsFactors=FALSE)
+options(digits=10)
+library(knitr)
+library(DESeq2)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+#library(ensembldb)
+library(dplyr)
+library(openxlsx)
+library(vsn)
+library(apeglm)
+library(ashr)
+library(ggpubr)
+
+# plot function 
+source("/CommonFunctionR/plot_pdf_png.r")
+
+# project diretory 
+project_dir <- "project_path"
+path_input <- paste0(project_dir,"inputFiles/")
+path_output <- paste0(project_dir,"results/2.QC/")
+dir.create(path_output)
+path_deposit <- paste0(project_dir,"dataDeposit/")
+
+# load processed files from 1.data_preparation.Rmd
+# dds, dds.list, TPM.anno, group_means_wide
+load(paste0(path_deposit, "1.data_preparation.RData"))
+```
+
+Estimation of variants stability 
+```{r}
+ntd <- normTransform(dds)
+vsd<- vst(dds,blind=F)
+
+rld <- rlog(dds, blind=FALSE)
+p1 <- meanSdPlot(assay(ntd)) 
+p1 <- p1$gg + ggtitle("log2FC norm") #log2(n + 1)
+p2 <- meanSdPlot(assay(vsd)) 
+p2 <- p2$gg + ggtitle("variance stabilizing transformations ")
+# the rlog and VST have similar properties, but the rlog requires fitting a shrinkage term for each sample and each gene which takes time. 
+p3 <- meanSdPlot(assay(rld))
+p3 <- p3$gg + ggtitle("regularized logarithm (rlog)")
+
+p <- ggarrange(p2, p3, nrow = 1, ncol = 2)
+pdf_and_png(p, file_name = paste0(path_output, "variants_stability"), width = 10, h_to_w_ratio = .4)
+```
+
+Plot PCA 
+```{r PCA}
+
+pca.df  <- plotPCA(vsd, intgroup = c("Group", "Tissue"), returnData=TRUE) 
+# 
+percentVar <- round(100 * attr(pca.df, "percentVar"))
+# p1 <- ggplot(pca.df, aes(x = PC1, y = PC2, color=Group, label = rownames(pca.df))) +
+p1 <- ggplot(pca.df, aes(x = PC1, y = PC2, color=Tissue)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed() + 
+  scale_color_manual(values=c("#31C6D4", "#E69F00", "#A34343", "darkgreen"))  + 
+  #geom_text(aes(fontface=2)) +
+  theme_bw()
+p1 <- p1 + annotate(geom="text", x=-44, y=6, label="LUNG1_2", color="#A34343") 
+pdf_and_png(p1, file_name = paste0(path_output, "PCA_groups"), width = 6, h_to_w_ratio = 0.6)
+
+
+#heatmap of samples
+library(RColorBrewer)
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+  sampleDists <- dist(t(assay(vsd)))
+  sampleDistMatrix <- as.matrix(sampleDists)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+p <- pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         legend = F,
+         col=colors)
+pdf_and_png(p, file_name = paste0(path_output, "sample_heatmap_all"), width = 8, h_to_w_ratio = .8)
+```
+
+```{r , echo=T, results='hide'}
+
+# plot cooks distance 
+# "First it would be advantageous to make a PCA plot as described above to spot individual sample outliers; Second, one can make a boxplot of the Cook’s distances to see if one sample is consistently higher than others" -- DESeq2 tutorial 
+# We use Cook’s distance, which is a measure of how much the fitted coefficients would change if an individual sample were removed (Cook 1977)
+pdf(file = paste0(path_output, "Cooks_distance_all.pdf"), width = 6, height = 5)
+par(mar=c(8,5,2,2))
+boxplot(log10(assays(dds)[["cooks"]]), range=0, las=2)
+dev.off()
+
+
+pdf(file = paste0(path_output, "Dispersion_all.pdf"), width = 6, height = 5)
+plotDispEsts(dds)
+dev.off()
+
+```
+
+
+Plot for each samples 
+```{r MA_plot, echo=T, results='hide'}
+
+dds.list$Lung <- dds.list$Lung[,-2]
+dds.list$Lung <- estimateSizeFactors(dds.list$Lung) 
+dds.list$Lung <- estimateDispersions(dds.list$Lung)
+dds.list$Lung <- nbinomWaldTest(dds.list$Lung)
+
+colData(dds.list$Kidney)$Group <- gsub(colData(dds.list$Kidney)$Group, pattern = "Control", replacement = "Chow")
+
+# variants stability 
+for(i in names(dds.list)){
+  print(i)
+  
+  vsd.t<- vst(dds.list[[i]],blind=F)
+  p1 <- meanSdPlot(assay(vsd.t)) 
+  p1 <- p1$gg + ggtitle("variance stabilizing transformations ")
+  pdf_and_png(p1, file_name = paste0(path_output, i,"_stability"), width = 6, h_to_w_ratio = .8)
+  
+  #plot PCA for each tissue
+  pca.df  <- plotPCA(vsd.t, intgroup = c("Group"), returnData=TRUE) 
+  percentVar <- round(100 * attr(pca.df, "percentVar"))
+  p2 <-  ggplot(pca.df, aes(x = PC1, y = PC2, color=Group)) +
+    geom_point(size=3) +
+    xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+    coord_fixed() + 
+    scale_color_manual(values=c(  "darkgreen","#A34343"))  + 
+   geom_text_repel(aes(label = name),point.size = NA) +
+   #  coord_cartesian(clip = "off") +
+ # geom_label_repel(aes(label = name), fill = "white", xlim = c(-Inf, Inf), ylim = c(-Inf, Inf)) +
+    theme_bw()
+  pdf_and_png(p2, file_name = paste0(path_output, i, "_PCA_groups"), width = 8, h_to_w_ratio = 0.4)
+
+
+  
+  resApeT <- lfcShrink(dds.list[[i]], coef=2, type="apeglm", lfcThreshold=1)
+  resAshr <- lfcShrink(dds.list[[i]], coef=2, type="ashr", lfcThreshold=1)
+  resNorm <- lfcShrink(dds.list[[i]], coef=2, type="normal", lfcThreshold=1)
+
+  pdf(file = paste0(path_output, i,"_plotMA.pdf"), width = 16, height = 6)
+  par(mfrow=c(1,3), mar=c(4,4,2,1))
+  plotMA(resApeT, ylim=c(-3,3), cex=.8, main = "Apeglm")
+  plotMA(resAshr, ylim=c(-3,3), cex=.8, main = "Ashr")
+  plotMA(resNorm, ylim=c(-3,3), cex=.8, main = "Normal")
+  dev.off()
+  
+  pdf(file = paste0(path_output, i, "_dispersion.pdf"), width = 6, height = 5)
+  plotDispEsts(dds.list[[i]])
+  dev.off()
+}
+
+```
+
+
+
+```{r}
+library(apeglm)
+resApeT <- lfcShrink(dds, coef=2, type="apeglm", lfcThreshold=1)
+pdf(file = paste0(path_output, "MA_plot.pdf"), width = 6, height = 5)
+plotMA(resApeT, ylim=c(-3,3), cex=.8)
+abline(h=c(-1,1), col="dodgerblue", lwd=2)
+dev.off()
+
+```
+
+
+```{r}
+TPM_filtered <- TPM.anno[,!colnames(TPM.anno) %in% "LUNG1_2"]
+saveRDS(TPM_filtered, file = paste0(path_deposit, "TPM_Filtered_w_annotation.RDS"))
+```
+
+
+
+```{r}
+
+saveRDS(dds.list, file = paste0(path_deposit, "2.dds_list_filtered.RDS"))
+sessionInfo()
+
+```
+
+
