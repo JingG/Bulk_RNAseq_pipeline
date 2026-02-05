@@ -18,7 +18,8 @@ library(openxlsx)
 library(vsn)
 library(ggpubr)
 
-source("/Users/jing/NUS Dropbox/Jing Guo/Projects/bin/CommonFunctionR/plot_pdf_png.r")
+# a simple plot function 
+source("/CommonFunctionR/plot_pdf_png.r")
 project_dir <- "project_path"
 path_input <- paste0(project_dir,"inputFiles/")
 path_output <- paste0(project_dir,"results/DEG/")
@@ -79,8 +80,8 @@ for(i in names(dds.list)){
 
 ```{r}
 library(clusterProfiler)
-gmtPathways <- read.gmt("/Users/jing/NUS Dropbox/Jing Guo/Projects/bin/gmtFiles/m2.cp.v2024.1.Mm.symbols.gmt")
-gmtGO <- read.gmt("/Users/jing/NUS Dropbox/Jing Guo/Projects/bin/gmtFiles/m5.go.v2024.1.Mm.symbols.gmt")
+gmtPathways <- read.gmt("/mSigDB_gmt_files/m2.cp.v2024.1.Mm.symbols.gmt")
+gmtGO <- read.gmt("/mSigDB_gmt_files/m5.go.v2024.1.Mm.symbols.gmt")
 
 path_function <- paste0(project_dir, "results/4.functional/")
 
